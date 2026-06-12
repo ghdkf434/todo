@@ -63,10 +63,14 @@ type Task = {
 };
 
 const categories = ["학업", "운동", "생활", "기타"];
-const reasons = ["시간 부족", "컨디션 난조", "까먹음", "집중 방해", "귀찮음", "기타"];
+const reasons = ["시간 부족", "컨디션 난조", "까먹음", "집중 방해 요소", "귀찮음", "기타"];
 
 const today = () => new Date().toISOString().slice(0, 10);
 const percent = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
+const normalizeReason = (reason: string) => (reason === "집중 방해" ? "집중 방해 요소" : reason);
+const prefersRedirectSignIn = () =>
+  typeof window !== "undefined" &&
+  (window.matchMedia("(max-width: 768px)").matches || navigator.maxTouchPoints > 0);
 const inDays = (date: string, days: number) => {
   const target = new Date(`${date}T00:00:00`);
   const now = new Date();
@@ -99,6 +103,7 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tab, setTab] = useState<"todo" | "stats">("todo");
   const [showAdd, setShowAdd] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [recording, setRecording] = useState<Task | null>(null);
   const [form, setForm] = useState({ title: "", category: "학업", deadline: today() });
   const [result, setResult] = useState<Status>("done");
@@ -126,6 +131,13 @@ export default function Home() {
     });
   }, [user]);
 
+  const activeTasks = tasks.filter((task) => task.status === "todo");
+  const todayTasks = activeTasks.filter((task) => task.deadline === today());
+  const upcomingTasks = activeTasks.filter((task) => task.deadline !== today());
+  const historyTasks = tasks
+    .filter((task) => task.status !== "todo")
+    .sort((a, b) => b.deadline.localeCompare(a.deadline));
+
   const stats = useMemo(() => {
     const done = tasks.filter((task) => task.status === "done").length;
     const failed = tasks.filter((task) => task.status === "failed").length;
@@ -135,7 +147,7 @@ export default function Home() {
     const counts = reasons
       .map((reason) => ({
         reason,
-        count: tasks.filter((task) => task.failureReasons?.includes(reason)).length,
+        count: tasks.filter((task) => task.failureReasons?.map(normalizeReason).includes(reason)).length,
       }))
       .sort((a, b) => b.count - a.count);
     const top = counts[0];
@@ -144,8 +156,8 @@ export default function Home() {
     if (top?.count > 0) feedback = `${top.reason} 때문에 미룬 일이 가장 많았어요.`;
     if (percent(done, counted) >= 80) feedback = "완료율이 80% 이상이에요. 좋은 흐름입니다.";
     if (counted && percent(done, counted) <= 50) feedback = "완료율이 낮아요. 오늘 할 일을 조금 더 작게 나눠보세요.";
-    if ((counts.find((item) => item.reason === "집중 방해")?.count || 0) >= Math.max(2, failed / 2)) {
-      feedback = "집중 방해가 자주 보여요. 알림을 줄이고 짧은 집중 시간을 잡아보세요.";
+    if ((counts.find((item) => item.reason === "집중 방해 요소")?.count || 0) >= Math.max(2, failed / 2)) {
+      feedback = "집중 방해 요소가 자주 보여요. 알림을 줄이고 짧은 집중 시간을 잡아보세요.";
     }
 
     return {
@@ -158,8 +170,6 @@ export default function Home() {
       feedback,
     };
   }, [tasks]);
-
-  const todayTasks = tasks.filter((task) => task.deadline === today());
 
   async function addTask() {
     if (!user || !form.title.trim()) return;
@@ -202,11 +212,16 @@ export default function Home() {
     provider.addScope("email");
 
     try {
+      if (prefersRedirectSignIn()) {
+        await signInWithRedirect(auth, provider);
+        return;
+      }
+
       await signInWithPopup(auth, provider);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setAuthError(message);
-      if (message.toLowerCase().includes("popup")) await signInWithRedirect(auth, provider);
+      await signInWithRedirect(auth, provider);
     }
   }
 
@@ -239,7 +254,7 @@ export default function Home() {
         <header className="flex items-center justify-between px-5 pt-6">
           <div>
             <p className="text-2xl font-black">안녕!</p>
-            <p className="text-sm text-[#7b674e]">오늘도 미루미와 함께해요</p>
+            <p className="text-sm text-[#7b674e]">해야 할 일만 또렷하게 모아뒀어요</p>
           </div>
           <button onClick={logout} className="rounded-xl border border-[#ead7ad] px-3 py-2 text-xs text-[#7b674e]">
             로그아웃
@@ -250,13 +265,31 @@ export default function Home() {
           {tab === "todo" ? (
             <>
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="font-bold">오늘 해야 할 일</h2>
+                <div>
+                  <h2 className="font-bold">오늘 해야 할 일</h2>
+                  <p className="mt-1 text-xs text-[#8a7358]">완료한 일은 아래 기록으로 정리돼요</p>
+                </div>
                 <Quokka />
               </div>
-              <TaskList tasks={todayTasks} empty="오늘 마감인 일이 없어요." onPick={setRecording} />
+              <TaskList tasks={todayTasks} empty="오늘 남은 할 일이 없어요." onPick={setRecording} />
 
-              <h2 className="mb-3 mt-7 font-bold">전체 목록</h2>
-              <TaskList tasks={tasks} empty="아직 할 일이 없어요." onPick={setRecording} />
+              <h2 className="mb-3 mt-7 font-bold">앞으로 할 일</h2>
+              <TaskList tasks={upcomingTasks} empty="예정된 할 일이 없어요." onPick={setRecording} />
+
+              <section className="mt-7">
+                <button
+                  onClick={() => setShowHistory((value) => !value)}
+                  className="flex w-full items-center justify-between rounded-2xl border border-[#ead7ad] bg-white px-4 py-3 text-left font-bold text-[#6b4a24]"
+                >
+                  <span>완료/미완료 기록 {historyTasks.length}개</span>
+                  <span>{showHistory ? "접기" : "보기"}</span>
+                </button>
+                {showHistory && (
+                  <div className="mt-3">
+                    <TaskList tasks={historyTasks} empty="아직 기록된 결과가 없어요." onPick={setRecording} compact />
+                  </div>
+                )}
+              </section>
 
               <button
                 onClick={() => setShowAdd(true)}
@@ -387,7 +420,17 @@ export default function Home() {
   );
 }
 
-function TaskList({ tasks, empty, onPick }: { tasks: Task[]; empty: string; onPick: (task: Task) => void }) {
+function TaskList({
+  tasks,
+  empty,
+  onPick,
+  compact = false,
+}: {
+  tasks: Task[];
+  empty: string;
+  onPick: (task: Task) => void;
+  compact?: boolean;
+}) {
   return (
     <div className="space-y-3">
       {tasks.length === 0 && <p className="rounded-2xl bg-white p-5 text-center text-sm text-[#8a7358]">{empty}</p>}
@@ -395,7 +438,9 @@ function TaskList({ tasks, empty, onPick }: { tasks: Task[]; empty: string; onPi
         <button
           key={task.id}
           onClick={() => onPick(task)}
-          className={`w-full rounded-2xl border p-4 text-left ${
+          className={`w-full rounded-2xl border text-left ${
+            compact ? "p-3" : "p-4"
+          } ${
             task.status === "done"
               ? "border-[#ffe28a] bg-[#fff4bf]"
               : task.status === "failed"
