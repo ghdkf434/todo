@@ -2,6 +2,10 @@
 
 왜 미루는지 기록하는 To-Do 앱입니다. Google 로그인, Firestore 저장, 완료율 통계, 실패 원인 기록을 지원합니다.
 
+## 배포 주소
+
+https://mirumi-96354.web.app
+
 ## 실행
 
 ```bash
